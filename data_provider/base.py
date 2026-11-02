@@ -2225,7 +2225,10 @@ class DataFetcherManager:
                 normalized_codes.append(target.canonical_id)
             else:
                 normalized_codes.append(normalize_stock_code(code))
-        stock_codes = normalized_codes
+        # Bulk providers only support China; keep Taiwan out of their requests.
+        stock_codes = [code for code in normalized_codes if not _is_tw_market(code)]
+        if not stock_codes:
+            return 0
 
         from src.config import get_config
 
@@ -2338,6 +2341,9 @@ class DataFetcherManager:
 
     def prefetch_daily_klines(self, stock_codes: List[str], days: int = 30) -> int:
         """Batch-prefetch TickFlow daily K-lines without changing per-stock callers."""
+        stock_codes = [code for code in stock_codes if not _is_tw_market(normalize_stock_code(code))]
+        if not stock_codes:
+            return 0
         fetcher = self._get_fetcher_by_name("TickFlowFetcher", capability="daily_data")
         if fetcher is None or not hasattr(fetcher, "prefetch_daily_klines"):
             return 0
@@ -2962,6 +2968,8 @@ class DataFetcherManager:
         """
         # Normalize code (strip SH/SZ prefix etc.)
         stock_code = normalize_stock_code(stock_code)
+        if _is_tw_market(stock_code):
+            return None
 
         from .realtime_types import get_chip_circuit_breaker
         from src.config import get_config
@@ -3121,7 +3129,10 @@ class DataFetcherManager:
         from .akshare_fetcher import _is_us_code
         is_us = _is_us_code(stock_code)
         _US_CAPABLE_FETCHERS = {"YfinanceFetcher", "LongbridgeFetcher", "FinnhubFetcher", "AlphaVantageFetcher"}
-        for fetcher in self._get_fetchers_snapshot():
+        name_fetchers = self._get_fetchers_snapshot()
+        if _is_tw_market(stock_code):
+            name_fetchers = [f for f in name_fetchers if f.name == "YfinanceFetcher"]
+        for fetcher in name_fetchers:
             if not hasattr(fetcher, 'get_stock_name'):
                 continue
             if is_us and fetcher.name not in _US_CAPABLE_FETCHERS:
@@ -3276,6 +3287,8 @@ class DataFetcherManager:
         
         # 2. 尝试批量获取股票列表
         for fetcher in self._get_fetchers_snapshot():
+            if not any(not _is_tw_market(code) for code in missing_codes):
+                break
             if not hasattr(fetcher, 'get_stock_list') or not missing_codes:
                 continue
             if not self._is_fetcher_available(fetcher, capability="stock_list"):

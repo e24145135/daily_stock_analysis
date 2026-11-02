@@ -81,6 +81,25 @@ class YfinanceFetcher(BaseFetcher):
         pass
 
     @staticmethod
+    def _stock_name_from_info(info: Dict[str, Any], symbol: str) -> str:
+        for field in ("shortName", "longName"):
+            name = info.get(field)
+            if is_meaningful_stock_name(name, symbol):
+                return str(name).strip()
+        return STOCK_NAME_MAP.get(symbol, "")
+
+    def get_stock_name(self, stock_code: str) -> Optional[str]:
+        """Resolve a Yahoo name independently of quote/price availability."""
+        symbol = self._convert_stock_code(stock_code)
+        try:
+            import yfinance as yf
+
+            return self._stock_name_from_info(yf.Ticker(symbol).info or {}, symbol) or None
+        except Exception:
+            logger.debug("[Yfinance] Stock name lookup failed for %s", symbol)
+            return None
+
+    @staticmethod
     def _is_jp_kr_suffix_stock(stock_code: str) -> bool:
         """Return True for supported JP/KR suffix-only Yahoo symbols."""
         return is_suffix_market_symbol(stock_code, "jp") or is_suffix_market_symbol(stock_code, "kr")
@@ -212,7 +231,7 @@ class YfinanceFetcher(BaseFetcher):
                 start=start_date,
                 end=end_date,
                 progress=False,  # 禁止进度条
-                auto_adjust=True,  # 自动调整价格（复权）
+                auto_adjust=False,  # 保留未作股息调整的 OHLC；Yahoo 仍可能按拆股调整历史价格
                 multi_level_index=True
             )
 
@@ -887,8 +906,7 @@ class YfinanceFetcher(BaseFetcher):
             except Exception:
                 ticker_info = {}
             try:
-                info_name = ticker_info.get('shortName', '') or ticker_info.get('longName', '') or ''
-                name = info_name if is_meaningful_stock_name(info_name, symbol) else STOCK_NAME_MAP.get(symbol, '')
+                name = self._stock_name_from_info(ticker_info, symbol)
             except Exception:
                 name = STOCK_NAME_MAP.get(symbol, '')
 
